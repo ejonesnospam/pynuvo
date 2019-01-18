@@ -39,8 +39,9 @@ SOURCE_PATTERN = re.compile('Z0(?P<zone>\d)'
 
 
 EOL = b'\r'
-TIMEOUT = 1  # Number of seconds before serial operation timeout
-VOLUME_DEFAULT = -40  # Value used when zone is muted or otherwise unable to get volume integer
+TIMEOUT_OP       = 0.2   # Number of seconds before serial operation timeout
+TIMEOUT_RESPONSE = 2.5   # Number of seconds before command response timeout
+VOLUME_DEFAULT  = -40    # Value used when zone is muted or otherwise unable to get volume integer
 
 class ZoneStatus(object):
     def __init__(self
@@ -255,34 +256,10 @@ def get_nuvo(port_url):
             self._port.stopbits = serial.STOPBITS_ONE
             self._port.bytesize = serial.EIGHTBITS
             self._port.parity = serial.PARITY_NONE
-            self._port.timeout = TIMEOUT
-            self._port.write_timeout = TIMEOUT
+            self._port.timeout = TIMEOUT_OP
+            self._port.write_timeout = TIMEOUT_OP
             self._port.open()
 
-        def _listen_async(self, wait: bool):
-            """
-            """
-            receive_buffer = b''
-            message = b''
-            no_data = False
-
-            # listen for response
-            while (no_data == False):
-
-               _LOGGER.debug('Reading Async from input')
-
-               # fill buffer until we get term seperator
-               data = self._port.read(1)
-
-               if data:
-                  receive_buffer += data
-
-                  if EOL in receive_buffer:
-                     message, sep, receive_buffer = receive_buffer.partition(EOL)
-                     _LOGGER.info('Received: %s', message)
-                     _parse_response(str(message))
-               else:
-                  no_data = True
 
         def _send_request(self, request):
             """
@@ -298,24 +275,22 @@ def get_nuvo(port_url):
             self._port.flush() # it is buffering
             return True
 
-        def _process_request(self, request: str):
-            """
-            :param request: request that is sent to the nuvo 
-            :return: ascii string returned by nuvo
-            """
 
-            self._listen_async(False)
+        def _listen_maybewait(self, wait_for_response: bool):
 
-            self._send_request(request)
-
+            no_data = False
             receive_buffer = b''
             message = b''
+            start_time = time.time()
+            timeout = TIMEOUT_RESPONSE 
 
             # listen for response
-            while True:
+            while (no_data == False):
 
-               #Wait 100 millisec between retry attempt(s)
-               #time.sleep(.1)
+               # Exit if timeout
+               if( (time.time() - start_time) > timeout ):
+                  _LOGGER.warning('Expected response from command but no response before timeout')
+                  return None
 
                # fill buffer until we get term seperator 
                data = self._port.read(1)
@@ -332,12 +307,32 @@ def get_nuvo(port_url):
                      _LOGGER.debug('Expecting response from command sent - Data received but no EOL yet :(')
                else:
                   _LOGGER.debug('Expecting response from command sent - No Data received')
+                  if ( wait_for_response == False ): 
+                     no_data = True
                   continue
 
+            return None
+
+        def _process_request(self, request: str):
+            """
+            :param request: request that is sent to the nuvo
+            :return: ascii string returned by nuvo
+            """
+
+            # Process any messages that have already been received 
+            self._listen_maybewait(False)
+
+            # Send command to device
+            self._send_request(request)
+
+            # Process expected response
+            rtn =  self._listen_maybewait(True)
+
+            return rtn
 
         @synchronized
         def zone_status(self, zone: int):
-            #return ZoneStatus.from_string(self._process_request(_format_zone_status_request(zone)))
+            # Send command multiple times, since we need result back, and rarely response can be wrong type 
             for count in range(1,5):
                try:
                   rtn = ZoneStatus.from_string(self._process_request(_format_zone_status_request(zone)))
@@ -345,11 +340,12 @@ def get_nuvo(port_url):
                      _LOGGER.debug('Zone Status Request - Response Invalid - Retry Count: %d' , count)
                      raise ValueError('Zone Status Request - Response Invalid')
                   else:
+                     return rtn
                      break  # Successful execution; exit for loop
                except:
                   rtn = None
                #Wait 1 sec between retry attempt(s)
-               #time.sleep(1)
+               time.sleep(1)
                continue  # end of for loop // retry
             return rtn
 
