@@ -6,7 +6,7 @@ import sys
 VERSION = '0.1'
 
 try:
-    from setuptools import setup
+    import setuptools
 except ImportError:
     from distutils.core import setup
 
@@ -34,13 +34,17 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 """
 
+with open("README.md", "r") as fh:
+    long_description = fh.read()
+
+
 setuptools.setup(name='pynuvo',
       version=VERSION,
       description='Python API for talking to Nuvo multi zone amplifier',
       author='ejonesnospam',
       author_email="ejonesnospam@gmail.com",
-      license='MIT',
       install_requires=['pyserial>=3.4'],
+      long_description=long_description,
       long_description_content_type="text/markdown",
       url="https://github.com/ejonesnospam/pynuvo",
       packages=setuptools.find_packages(),
